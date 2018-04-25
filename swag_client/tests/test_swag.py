@@ -1,4 +1,6 @@
 from deepdiff import DeepDiff
+from marshmallow.exceptions import ValidationError
+import pytest
 
 
 def test_upgrade_1_to_2():
@@ -697,6 +699,57 @@ def test_get_all_accounts(s3_bucket_name):
     assert len(data['accounts']) == 1
 
 
+def test_downgrade_spinnaker():
+    """Test without any metadata name set -- should default to the account name"""
+    from swag_client.migrations.versions.v2 import downgrade
+    account_spinnaker = {
+        "email": "spinnakertestaccount@test.com",
+        "services": [
+            {
+                "metadata": {},
+                "status": [
+                    {
+                        "region": "all",
+                        "notes": [],
+                        "enabled": True
+                    }
+                ],
+                "name": "spinnaker"
+            }
+        ],
+        "type": "service",
+        "aliases": [],
+        "description": "Spinnaker Test for Downgrade",
+        "schemaVersion": "2",
+        "id": "098765432110",
+        "name": "testspinnaker",
+        "owner": "netflix",
+        "contacts": [
+            "test@test.com"
+        ],
+        "status": [
+            {
+                "status": "created",
+                "region": "all",
+                "notes": []
+            }
+        ],
+        "sensitive": False,
+        "provider": "aws",
+        "tags": [],
+        "environment": "test"
+    }
+
+    v1 = downgrade(account_spinnaker)
+    assert v1["services"]["spinnaker"]["name"] == "testspinnaker"
+
+    # With the name set:
+    account_spinnaker["services"][0]["metadata"]["name"] = "lolaccountname"
+    v1 = downgrade(account_spinnaker)
+    assert v1["services"]["spinnaker"]["name"] == "lolaccountname"
+
+
+
 def test_get_by_name(s3_bucket_name):
     from swag_client.swag import get_by_name
 
@@ -805,3 +858,106 @@ def test_get_by_aws_account_number(s3_bucket_name):
 
     # Test by getting account that does not exist:
     assert not get_by_aws_account_number('thisdoesnotexist', s3_bucket_name)
+
+
+def test_schema_context_validation_type_field():
+    """Test schema context validation for type field"""
+    from swag_client.backend import SWAGManager
+    from swag_client.util import parse_swag_config_options
+
+    swag_opts = {
+        'swag.schema_context': {
+            'type': ['billing', 'security', 'shared-service', 'service'],
+        }
+    }
+    swag = SWAGManager(**parse_swag_config_options(swag_opts))
+
+    data = {
+        "aliases": ["test"],
+        "contacts": ["admins@test.net"],
+        "description": "This is just a test.",
+        "email": "test@example.net",
+        "environment": "dev",
+        "id": "012345678910",
+        "name": "testaccount",
+        "owner": "netflix",
+        "provider": "aws",
+    }
+
+    # Test with invalid account type
+    with pytest.raises(ValidationError):
+        data['type'] = 'bad_type'
+        swag.create(data)
+
+    # Test with a valid account type
+    data['type'] = 'billing'
+    account = swag.create(data)
+    assert account.get('type') == 'billing'
+
+    
+def test_schema_context_validation_environment_field():
+    """Test schema context validation for environment field"""
+    from swag_client.backend import SWAGManager
+    from swag_client.util import parse_swag_config_options
+
+    swag_opts = {
+        'swag.schema_context': {
+            'environment': ['test', 'prod']
+        }
+    }
+
+    swag = SWAGManager(**parse_swag_config_options(swag_opts))
+
+    data = {
+        "aliases": ["test"],
+        "contacts": ["admins@test.net"],
+        "description": "This is just a test.",
+        "email": "test@example.net",
+        "id": "012345678910",
+        "name": "testaccount",
+        "owner": "netflix",
+        "provider": "aws",
+    }
+
+    # Test with invalid environment
+    with pytest.raises(ValidationError):
+        data['environment'] = 'bad_environment'
+        swag.create(data)
+
+    # Test with a valid environment
+    data['environment'] = 'test'
+    account = swag.create(data)
+    assert account.get('environment') == 'test'
+
+def test_schema_context_validation_owner_field():
+    """Test schema context validation for owner field"""
+    from swag_client.backend import SWAGManager
+    from swag_client.util import parse_swag_config_options
+
+    swag_opts = {
+        'swag.schema_context': {
+            'owner': ['netflix', 'dvd', 'aws', 'third-party']
+        }
+    }
+    swag = SWAGManager(**parse_swag_config_options(swag_opts))
+
+    data = {
+        "aliases": ["test"],
+        "contacts": ["admins@test.net"],
+        "description": "This is just a test.",
+        "email": "test@example.net",
+        "id": "012345678910",
+        "name": "testaccount",
+        "environment": "test",
+        "provider": "aws",
+    }
+
+    # Test with invalid owner
+    with pytest.raises(ValidationError):
+        data['owner'] = 'bad_owner'
+        swag.create(data)
+
+    # Test with a valid owner
+    data['owner'] = 'netflix'
+    account = swag.create(data)
+    assert account.get('owner') == 'netflix' 
